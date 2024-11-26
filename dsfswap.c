@@ -218,15 +218,16 @@ int main(int argc, char **argv)
         fwrite(block1, 1, BLOCK_SIZE, out);
     }
 
-    // Write metadata chunk
-    fwrite(metadata_chunk, 1, metadata_length, out);
+    // Write and de-allocate metadata chunk if present
+    if (metadata_chunk)
+    {
+        fwrite(metadata_chunk, 1, metadata_length, out);
+        free(metadata_chunk);
+    }
 
     // Close files
     fclose(in);
     fclose(out);
-
-    // De-allocate memory for metadata chunk
-    free(metadata_chunk);
 
     puts("Done!");
 
