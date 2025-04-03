@@ -64,26 +64,82 @@ typedef PACKED_STRUCT
 } dsf_header_t;
 END_PACKED;
 
+// Enum for file operations
+typedef enum
+{
+    OP_SWAP_CHANNELS,
+    OP_LEFT_ISOLATE,
+    OP_RIGHT_ISOLATE,
+    OP_LEFT_INVERT,
+    OP_RIGHT_INVERT
+} operation_t;
+
+// List of strings for printing file operation
+const char *strings[] =
+{
+    "Swapping channel order",
+    "Isolating left channel",
+    "Isolating right channel",
+    "Inverting left channel",
+    "Inverting right channel"
+};
+
 int main(int argc, char **argv)
 {
     dsf_header_t header;
     FILE        *in, *out;
-    uint8_t      block1[BLOCK_SIZE], block2[BLOCK_SIZE], *metadata_chunk;
-    uint64_t     i, metadata_length, num_blocks;
+    operation_t  operation;
+    uint8_t      blockL[BLOCK_SIZE], blockR[BLOCK_SIZE], *metadata_chunk;
+    uint64_t     i, j, metadata_length, num_blocks;
 
-    if (argc != 3)
+    if (argc != 4)
     {
-        printf("Usage: %s input.dsf output.dsf\n", argv[0]);
+        printf("Usage: %s operation input.dsf output.dsf\n\n"
+               "Valid operations:\n"
+               "\tswap     - Swaps left and right channel data\n"
+               "\tlisolate - Isolates left channel; copies data to right channel\n"
+               "\trisolate - Isolates right channel; copies data to left channel\n"
+               "\tlinvert  - Inverts left channel phase\n"
+               "\trinvert  - Inverts right channel phase\n",
+               argv[0]);
 
         return 0;
     }
-
+    
+    // Attempt to read in operation
+    if (strcmp(argv[1], "swap") == 0)
+    {
+        operation = OP_SWAP_CHANNELS;
+    }
+    else if (strcmp(argv[1], "lisolate") == 0)
+    {
+        operation = OP_LEFT_ISOLATE;
+    }
+    else if (strcmp(argv[1], "risolate") == 0)
+    {
+        operation = OP_RIGHT_ISOLATE;
+    }
+    else if (strcmp(argv[1], "linvert") == 0)
+    {
+        operation = OP_LEFT_INVERT;
+    }
+    else if (strcmp(argv[1], "rinvert") == 0)
+    {
+        operation = OP_RIGHT_INVERT;
+    }
+    else 
+    {
+        fprintf(stderr, "Error: Invalid operation '%s'.\n", operation);
+        
+        goto operation_error;
+    }
+    
     //
     // Open files
     //
 
     // Attempt to open input file for reading
-    if ((in = fopen(argv[1], "rb")) == NULL)
+    if ((in = fopen(argv[2], "rb")) == NULL)
     {
         perror("Error opening input file");
 
@@ -91,7 +147,7 @@ int main(int argc, char **argv)
     }
     
     // Attempt to open output file for writing
-    if ((out = fopen(argv[2], "wb")) == NULL)
+    if ((out = fopen(argv[3], "wb")) == NULL)
     {
         perror("Error opening output file");
 
@@ -172,7 +228,8 @@ int main(int argc, char **argv)
         goto read_error;
     }
 
-    printf("Swapping channel order in %s - saving to %s...\n", argv[1], argv[2]);
+    // Print operation
+    printf("%s in %s - saving to %s...\n", strings[operation], argv[2], argv[3]);
 
     // Read in metadata if present
     if (header.dsd_chunk.metadata_ptr != 0)
@@ -210,12 +267,44 @@ int main(int argc, char **argv)
     for (i = 0; i < num_blocks; i += 2)
     {
         // Read in block pair
-        fread(block1, 1, BLOCK_SIZE, in);
-        fread(block2, 1, BLOCK_SIZE, in);
+        fread(blockL, 1, BLOCK_SIZE, in);
+        fread(blockR, 1, BLOCK_SIZE, in);
 
-        // Write block pair in alternate order (thus swapping channels)
-        fwrite(block2, 1, BLOCK_SIZE, out);
-        fwrite(block1, 1, BLOCK_SIZE, out);
+        switch (operation)
+        {
+            case OP_SWAP_CHANNELS:
+                // Write block pair in alternate order (thus swapping channels)
+                fwrite(blockR, 1, BLOCK_SIZE, out);
+                fwrite(blockL, 1, BLOCK_SIZE, out);
+                
+                continue;
+            case OP_LEFT_ISOLATE:
+                // Write left channel block to channel pair
+                fwrite(blockL, 1, BLOCK_SIZE, out);
+                fwrite(blockL, 1, BLOCK_SIZE, out);
+
+                continue;
+            case OP_RIGHT_ISOLATE:
+                // Write right channel block to channel pair
+                fwrite(blockR, 1, BLOCK_SIZE, out);
+                fwrite(blockR, 1, BLOCK_SIZE, out);
+                
+                continue;
+            case OP_LEFT_INVERT:
+                // Invert left channel phase
+                for (j = 0; j < BLOCK_SIZE; j++)
+                    blockL[j] = ~blockL[j];
+                
+                break;
+            case OP_RIGHT_INVERT:
+                // Invert right channel phase
+                for (j = 0; j < BLOCK_SIZE; j++)
+                    blockR[j] = ~blockR[j];
+        }
+
+        // Write block pair
+        fwrite(blockL, 1, BLOCK_SIZE, out);
+        fwrite(blockR, 1, BLOCK_SIZE, out);
     }
 
     // Write and de-allocate metadata chunk if present
@@ -240,5 +329,6 @@ read_error:
 output_error:
     fclose(in);
 
+operation_error:
     return 1;
 }
