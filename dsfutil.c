@@ -67,21 +67,33 @@ END_PACKED;
 // Enum for file operations
 typedef enum
 {
+    OP_INVALID = -1,
     OP_SWAP_CHANNELS,
     OP_LEFT_ISOLATE,
     OP_RIGHT_ISOLATE,
     OP_LEFT_INVERT,
-    OP_RIGHT_INVERT
+    OP_RIGHT_INVERT,
+    OP_INVERT,
+    NUM_OPERATIONS
 } operation_t;
 
-// List of strings for printing file operation
-const char *strings[] =
+// Enum for string table
+enum
 {
-    "Swapping channel order",
-    "Isolating left channel",
-    "Isolating right channel",
-    "Inverting left channel",
-    "Inverting right channel"
+    STR_KEYWORD,
+    STR_DESCRIPTION,
+    STR_FEEDBACK
+};
+
+// Operation string table - keyword, description, feedback 
+const char *operations[][NUM_OPERATIONS] =
+{
+    { "swapch",   "Swaps left and right channel data",                   "Swapping channel order"  },
+    { "lisolate", "Isolates left channel; copies data to right channel", "Isolating left channel"  },
+    { "risolate", "Isolates right channel; copies data to left channel", "Isolating right channel" },
+    { "linvert",  "Inverts left channel phase",                          "Inverting left channel"  },
+    { "rinvert",  "Inverts right channel phase",                         "Inverting right channel" },
+    { "invert",   "Inverts left and right channel phase",                "Inverting phase"         }
 };
 
 int main(int argc, char **argv)
@@ -92,48 +104,34 @@ int main(int argc, char **argv)
     uint8_t      blockL[BLOCK_SIZE], blockR[BLOCK_SIZE], *metadata_chunk;
     uint64_t     i, j, metadata_length, num_blocks;
 
+    // Ensure valid number of arguments
     if (argc != 4)
     {
         printf("Usage: %s operation input.dsf output.dsf\n\n"
-               "Valid operations:\n"
-               "\tswap     - Swaps left and right channel data\n"
-               "\tlisolate - Isolates left channel; copies data to right channel\n"
-               "\trisolate - Isolates right channel; copies data to left channel\n"
-               "\tlinvert  - Inverts left channel phase\n"
-               "\trinvert  - Inverts right channel phase\n",
-               argv[0]);
+               "Valid operations:\n", argv[0]);
+
+        // Print list of valid operations and their descriptions
+        for (i = 0; i < NUM_OPERATIONS; i++)
+            printf("\t- %s:\t%s\n", operations[i][STR_KEYWORD], operations[i][STR_DESCRIPTION]);
 
         return 0;
     }
-    
+
     // Attempt to read in operation
-    if (strcmp(argv[1], "swap") == 0)
+    for (operation = OP_INVALID, i = OP_SWAP_CHANNELS; i < NUM_OPERATIONS; i++)
     {
-        operation = OP_SWAP_CHANNELS;
+        if (strcmp(argv[1], operations[i][STR_KEYWORD]) == 0)
+            operation = i;
     }
-    else if (strcmp(argv[1], "lisolate") == 0)
+
+    // Ensure operation valid
+    if (operation == OP_INVALID)
     {
-        operation = OP_LEFT_ISOLATE;
-    }
-    else if (strcmp(argv[1], "risolate") == 0)
-    {
-        operation = OP_RIGHT_ISOLATE;
-    }
-    else if (strcmp(argv[1], "linvert") == 0)
-    {
-        operation = OP_LEFT_INVERT;
-    }
-    else if (strcmp(argv[1], "rinvert") == 0)
-    {
-        operation = OP_RIGHT_INVERT;
-    }
-    else 
-    {
-        fprintf(stderr, "Error: Invalid operation '%s'.\n", operation);
-        
+        fprintf(stderr, "Error: Invalid operation '%s'.\n", argv[1]);
+
         goto operation_error;
     }
-    
+
     //
     // Open files
     //
@@ -145,7 +143,7 @@ int main(int argc, char **argv)
 
         return 1;
     }
-    
+
     // Attempt to open output file for writing
     if ((out = fopen(argv[3], "wb")) == NULL)
     {
@@ -174,7 +172,7 @@ int main(int argc, char **argv)
 
         goto read_error;
     }
-    
+
     // Verify DSD chunk length
     if (header.dsd_chunk.length != sizeof(dsd_chunk_t))
     {
@@ -201,7 +199,7 @@ int main(int argc, char **argv)
     }
 
     // Verify other fmt chunk properties
-    if (header.fmt_chunk.version                != 1          || header.fmt_chunk.id              != 0  || 
+    if (header.fmt_chunk.version                != 1          || header.fmt_chunk.id              != 0  ||
        (header.fmt_chunk.sample_rate % 2822400) != 0          ||
        (header.fmt_chunk.bits_per_sample        != 1          && header.fmt_chunk.bits_per_sample != 8) ||
         header.fmt_chunk.block_size             != BLOCK_SIZE || header.fmt_chunk.reserved        != 0)
@@ -228,8 +226,8 @@ int main(int argc, char **argv)
         goto read_error;
     }
 
-    // Print operation
-    printf("%s in %s - saving to %s...\n", strings[operation], argv[2], argv[3]);
+    // Print feedback
+    printf("%s in %s - saving to %s...\n", operations[operation][STR_FEEDBACK], argv[2], argv[3]);
 
     // Read in metadata if present
     if (header.dsd_chunk.metadata_ptr != 0)
@@ -276,7 +274,7 @@ int main(int argc, char **argv)
                 // Write block pair in alternate order (thus swapping channels)
                 fwrite(blockR, 1, BLOCK_SIZE, out);
                 fwrite(blockL, 1, BLOCK_SIZE, out);
-                
+
                 continue;
             case OP_LEFT_ISOLATE:
                 // Write left channel block to channel pair
@@ -288,18 +286,27 @@ int main(int argc, char **argv)
                 // Write right channel block to channel pair
                 fwrite(blockR, 1, BLOCK_SIZE, out);
                 fwrite(blockR, 1, BLOCK_SIZE, out);
-                
+
                 continue;
             case OP_LEFT_INVERT:
                 // Invert left channel phase
                 for (j = 0; j < BLOCK_SIZE; j++)
                     blockL[j] = ~blockL[j];
-                
+
                 break;
             case OP_RIGHT_INVERT:
                 // Invert right channel phase
                 for (j = 0; j < BLOCK_SIZE; j++)
                     blockR[j] = ~blockR[j];
+
+                break;
+            case OP_INVERT:
+                // Invert left and right channel phase
+                for (j = 0; j < BLOCK_SIZE; j++)
+                {
+                    blockL[j] = ~blockL[j];
+                    blockR[j] = ~blockR[j];
+                }
         }
 
         // Write block pair
